@@ -13,7 +13,7 @@ class Episode(BaseModel):
     duration: str | None = Field(None, description="时长,格式: HH:MM:SS")
     desc: str = Field(default="", description="剧集简介")
     ep: int = Field(..., description="集数", ge=0)
-    sort: int = Field(..., description="排序号", ge=0)
+    sort: float = Field(..., description="排序号(特别篇可能为小数)", ge=0)
     id: int = Field(..., description="剧集ID")
     subject_id: int = Field(..., description="条目ID")
     comment: int = Field(default=0, description="评论数", ge=0)

@@ -19,7 +19,7 @@ class EpisodeItem(TypedDict, total=False):
     subject_id: int
     type: int
     ep: int
-    sort: int
+    sort: float
     name: str
     name_cn: str
     airdate: str

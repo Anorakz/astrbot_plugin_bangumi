@@ -88,6 +88,10 @@ def _format_episode_label(render_data: RenderData) -> str:
     number_source = sort_number if sort_number not in (None, "") else episode_number
     if isinstance(number_source, int):
         return f"EP.{number_source:02d}"
+    if isinstance(number_source, float):
+        if number_source.is_integer():
+            return f"EP.{int(number_source):02d}"
+        return f"EP.{number_source:g}"
     if isinstance(number_source, str) and number_source.isdigit():
         return f"EP.{int(number_source):02d}"
     if isinstance(episode_number, int):

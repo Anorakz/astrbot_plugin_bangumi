@@ -158,9 +158,9 @@ class BangumiPlugin(Star):  # type: ignore[misc]
                 self.scheduler_manager.add_job(
                     func=self.subscription_service.check_updates,
                     trigger="cron",
-                    minute="*/15",
+                    minute="*/15",  # patched: 15 分钟 tick（节流交给 next_check_after 门控）
                 )
-                logger.info("Bangumi 插件定时更新任务已启动(每15分钟)")
+                logger.info("Bangumi 插件定时更新任务已启动(15 分钟 tick + 播出窗口门控)")  # patched
             except (RuntimeError, ValueError, TypeError) as e:
                 logger.error(f"添加定时任务失败: {e}")
 
@@ -301,8 +301,13 @@ class BangumiPlugin(Star):  # type: ignore[misc]
         if should_render_text_as_image(text):
             base64_image = await self._render_response_text_base64(text)
             if base64_image:
-                await event.send(MessageChain([Comp.Image.fromBase64(base64_image)]))
-                return
+                try:
+                    await event.send(MessageChain([Comp.Image.fromBase64(base64_image)]))
+                    return
+                except Exception as exc:
+                    # patched 18: QQ 图片上传通道(highway)偶发失败（服务端出口带宽小），
+                    # 若不兜住会让整个 handler 抛 ActionFailed，用户只看到「:( 」
+                    logger.warning(f"[patched] 图片发送失败，回退纯文本: {exc}")
         await event.send(MessageChain([Comp.Plain(text)]))
 
     @staticmethod
@@ -516,8 +521,13 @@ class BangumiPlugin(Star):  # type: ignore[misc]
 
         class GroupSessionFilter(SessionFilter):  # type: ignore[misc]
             def filter(self, wait_event: AstrMessageEvent) -> str:
+                # patched 17: 待选状态按「会话 + 发起人」隔离。
+                # 原本只按会话(群号)注册等待 → 群内任何人的下一条消息都会被当成
+                # 「序号选择」触发报错，多人同时 /追番 还会互相顶掉。
                 wait_session_key = BangumiPlugin._resolve_session_key(wait_event)
-                return wait_session_key or wait_event.unified_msg_origin
+                if not wait_session_key:
+                    return wait_event.unified_msg_origin
+                return f"{wait_session_key}:{wait_event.get_sender_id()}"
 
         @session_waiter(timeout=300)  # type: ignore[untyped-decorator]
         async def subscribe_confirm_waiter(

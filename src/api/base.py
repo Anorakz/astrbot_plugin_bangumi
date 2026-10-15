@@ -27,7 +27,7 @@ class BaseBangumiService:
         max_retries: int = 3,
         session: aiohttp.ClientSession | None = None,
     ) -> None:
-        self.base_url = "https://api.bgm.tv"
+        self.base_url = "https://bgmapi.anibt.net"
         self.headers = {
             "Accept": "application/json",
             "User-Agent": user_agent,
