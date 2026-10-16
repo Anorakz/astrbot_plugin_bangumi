@@ -263,6 +263,8 @@ class BangumiPlugin(Star):  # type: ignore[misc]
                 "/bgm番剧 <关键词> [数量] - 搜索 TV 动画",
                 "/bgm电影 <关键词> [数量] - 搜索剧场版动画",
                 "/bgm漫画 <关键词> [数量] - 搜索漫画",
+                "/bgm小说 <关键词> [数量] - 搜索小说（轻小说）",
+                "/bgm游戏 <关键词> [数量] - 搜索游戏",
                 "/calendar - 查看每日放送表",
                 "/today - 查看今日更新",
                 "/追番 <番剧名> - 订阅番剧更新",
@@ -415,6 +417,43 @@ class BangumiPlugin(Star):  # type: ignore[misc]
             top_k,
             subject_type=[SubjectType.BOOK.value],
             subject_tags=[CommonTag.MANGA.value],
+        ):
+            yield result
+
+    @filter.command(  # type: ignore[untyped-decorator]
+        "bgm小说",
+        alias={"bgm轻小说"},
+    )
+    async def search_novel(
+        self, event: AstrMessageEvent, query: str, top_k: int = 1
+    ) -> AsyncGenerator[object, None]:
+        """仅搜索小说（轻小说）条目。"""
+        if not self.search_service:
+            yield await self._result_for_text(event, "❌ 搜索服务未就绪")
+            return
+        async for result in self.search_service.handle_subject_search(
+            event,
+            query,
+            top_k,
+            subject_type=[SubjectType.BOOK.value],
+            subject_tags=[CommonTag.NOVEL.value],
+        ):
+            yield result
+
+    @filter.command("bgm游戏")  # type: ignore[untyped-decorator]
+    async def search_game(
+        self, event: AstrMessageEvent, query: str, top_k: int = 1
+    ) -> AsyncGenerator[object, None]:
+        """仅搜索游戏条目。"""
+        if not self.search_service:
+            yield await self._result_for_text(event, "❌ 搜索服务未就绪")
+            return
+        async for result in self.search_service.handle_subject_search(
+            event,
+            query,
+            top_k,
+            subject_type=[SubjectType.GAME.value],
+            subject_tags=None,
         ):
             yield result
 

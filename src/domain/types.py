@@ -55,3 +55,4 @@ class CommonTag(StrEnum):
     TV = "TV"
     MOVIE = "剧场版"
     MANGA = "漫画"
+    NOVEL = "小说"
