@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import os
 import re
@@ -131,6 +132,7 @@ class BangumiPlugin(Star):  # type: ignore[misc]
                 text_result_builder=self._result_for_text,
                 proxy_url=proxy_url,
                 context=self.context,
+                image_sender=self._send_image_with_retry,
             )
 
             # 订阅服务
@@ -303,14 +305,47 @@ class BangumiPlugin(Star):  # type: ignore[misc]
         if should_render_text_as_image(text):
             base64_image = await self._render_response_text_base64(text)
             if base64_image:
-                try:
-                    await event.send(MessageChain([Comp.Image.fromBase64(base64_image)]))
-                    return
-                except Exception as exc:
-                    # patched 18: QQ 图片上传通道(highway)偶发失败（服务端出口带宽小），
-                    # 若不兜住会让整个 handler 抛 ActionFailed，用户只看到「:( 」
-                    logger.warning(f"[patched] 图片发送失败，回退纯文本: {exc}")
+                await self._send_image_with_retry(
+                    event,
+                    [Comp.Image.fromBase64(base64_image)],
+                    text,
+                )
+                return
         await event.send(MessageChain([Comp.Plain(text)]))
+
+    # patched 19: QQ 图片通道(highway)偶发 "TCP connect timeout" 导致整个发送失败。
+    # 框架代发（yield 结果）失败后无法补救，用户只看到静默或「:( 」，
+    # 因此图片一律由插件自己发送，失败按退避重试，最终回退一条文本保证有响应。
+    _IMAGE_SEND_ATTEMPTS = 3
+    _IMAGE_SEND_DELAYS = (2.0, 5.0)
+
+    async def _send_image_with_retry(
+        self,
+        event: AstrMessageEvent,
+        components: list[object],
+        fallback_text: str,
+    ) -> None:
+        """发送图片消息链，失败重试；重试耗尽后回退文本。"""
+        last_exc: Exception | None = None
+        for attempt in range(1, self._IMAGE_SEND_ATTEMPTS + 1):
+            try:
+                await event.send(MessageChain(list(components)))
+                if attempt > 1:
+                    logger.info(f"[patched] 图片第 {attempt} 次发送成功")
+                return
+            except Exception as exc:
+                last_exc = exc
+                logger.warning(
+                    f"[patched] 图片发送失败 (第 {attempt}/{self._IMAGE_SEND_ATTEMPTS} 次): {exc}"
+                )
+                if attempt < self._IMAGE_SEND_ATTEMPTS:
+                    await asyncio.sleep(self._IMAGE_SEND_DELAYS[attempt - 1])
+
+        logger.error(f"[patched] 图片重试耗尽，回退纯文本: {last_exc}")
+        try:
+            await event.send(MessageChain([Comp.Plain(fallback_text)]))
+        except Exception as exc:
+            logger.error(f"[patched] 文本回退发送失败: {exc}")
 
     @staticmethod
     def _build_proxy_url(proxy_host: str, proxy_port: str) -> str | None:

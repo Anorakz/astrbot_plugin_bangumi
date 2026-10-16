@@ -28,10 +28,20 @@ if TYPE_CHECKING:
     from ..api import BangumiService
 
 TextResultBuilder = Callable[[AstrMessageEvent, str], Awaitable[MessageResult]]
+ImageSender = Callable[
+    [AstrMessageEvent, list[Comp.Image], str], Awaitable[None]
+]
 
 
 async def _default_text_result(event: AstrMessageEvent, text: str) -> MessageResult:
     return event.plain_result(text)
+
+
+async def _default_image_sender(
+    event: AstrMessageEvent, components: list[Comp.Image], _fallback_text: str
+) -> None:
+    """兜底发送实现：直接交给框架发送（无重试）。"""
+    await event.send(event.chain_result(list(components)))
 
 
 class SearchService:
@@ -43,11 +53,13 @@ class SearchService:
         text_result_builder: TextResultBuilder | None = None,
         proxy_url: str | None = None,
         context: "Context | None" = None,
+        image_sender: ImageSender | None = None,
     ) -> None:
         self.service = service
         self.config_manager = config_manager
         self.context = context
         self._text_result_builder = text_result_builder or _default_text_result
+        self._image_sender = image_sender or _default_image_sender
         render_mode = self.config_manager.get_render_mode()
         self.subject_renderer = SubjectRenderer(
             session=session, render_mode=render_mode, proxy_url=proxy_url
@@ -86,7 +98,11 @@ class SearchService:
             )
 
             if image_components:
-                yield event.chain_result(image_components)
+                await self._send_image(
+                    event,
+                    image_components,
+                    "❌ 卡片发送失败（QQ 图片通道超时），请稍后再试",
+                )
             else:
                 yield await self._text_result(event, "❌ 未能生成渲染图片")
 
@@ -113,7 +129,11 @@ class SearchService:
             )
 
             if base64_image:
-                yield event.chain_result([Comp.Image.fromBase64(base64_image)])
+                await self._send_image(
+                    event,
+                    [Comp.Image.fromBase64(base64_image)],
+                    "❌ 放送表发送失败（QQ 图片通道超时），请稍后再试",
+                )
             else:
                 yield await self._text_result(event, "❌ 图片生成失败")
         except (BangumiApiError, RuntimeError, ValueError) as e:
@@ -144,7 +164,11 @@ class SearchService:
             )
 
             if base64_image:
-                yield event.chain_result([Comp.Image.fromBase64(base64_image)])
+                await self._send_image(
+                    event,
+                    [Comp.Image.fromBase64(base64_image)],
+                    "❌ 今日放送发送失败（QQ 图片通道超时），请稍后再试",
+                )
             else:
                 yield await self._text_result(event, "❌ 图片生成失败")
         except (BangumiApiError, RuntimeError, ValueError) as e:
@@ -153,6 +177,16 @@ class SearchService:
 
     async def _text_result(self, event: AstrMessageEvent, text: str) -> MessageResult:
         return await self._text_result_builder(event, text)
+
+    async def _send_image(
+        self,
+        event: AstrMessageEvent,
+        components: list[Comp.Image],
+        fallback_text: str,
+    ) -> None:
+        # patched 19: QQ 图片通道(highway)偶发 TCP connect timeout，
+        # 图片改由插件侧发送以便失败重试/回退（框架代发失败后无法补救）。
+        await self._image_sender(event, components, fallback_text)
 
     @staticmethod
     def _filter_today_calendar(calendar_data: list[CalendarDay]) -> list[CalendarDay]:
