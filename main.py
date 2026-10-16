@@ -293,12 +293,17 @@ class BangumiPlugin(Star):  # type: ignore[misc]
             return None
 
     async def _result_for_text(self, event: AstrMessageEvent, text: str) -> object:
+        # patched 20: 需要渲染成图片的长文本改由插件侧发送（带重试+文本回退），
+        # 发送后返回空消息链——框架 respond 阶段对空链显式跳过，不会再发一次。
         if not should_render_text_as_image(text):
             return event.plain_result(text)
 
         base64_image = await self._render_response_text_base64(text)
         if base64_image:
-            return event.chain_result([Comp.Image.fromBase64(base64_image)])
+            await self._send_image_with_retry(
+                event, [Comp.Image.fromBase64(base64_image)], text
+            )
+            return event.chain_result([])
         return event.plain_result(text)
 
     async def _send_text(self, event: AstrMessageEvent, text: str) -> None:

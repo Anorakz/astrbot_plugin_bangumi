@@ -1,3 +1,4 @@
+import asyncio
 from typing import TYPE_CHECKING
 
 import aiohttp
@@ -20,6 +21,10 @@ if TYPE_CHECKING:
 
 
 class SubscriptionService:
+    # patched 20: 主动推送失败重试参数（见 _send_update_message）
+    _UPDATE_SEND_ATTEMPTS = 3
+    _UPDATE_SEND_DELAYS = (3.0, 8.0)
+
     def __init__(
         self,
         repository: BangumiRepository,
@@ -926,10 +931,28 @@ class SubscriptionService:
             raise RuntimeError("AstrBot Context 不可用,无法主动发送更新通知")
 
         session = self._resolve_notification_session(group_id)
-        if await self.context.send_message(session, message_chain):
-            return
+        # patched 20: QQ 图片通道(highway)偶发 TCP connect timeout，
+        # 主动推送失败即丢失，这里加退避重试；重试耗尽仍抛错，由调用方回退纯文本。
+        last_exc: Exception | None = None
+        for attempt in range(1, self._UPDATE_SEND_ATTEMPTS + 1):
+            try:
+                if await self.context.send_message(session, message_chain):
+                    if attempt > 1:
+                        logger.info(
+                            f"[patched] 推送第 {attempt} 次发送成功 ({group_id})"
+                        )
+                    return
+                raise RuntimeError(f"AstrBot 主动发送未找到匹配平台: {session}")
+            except Exception as exc:
+                last_exc = exc
+                logger.warning(
+                    f"[patched] 推送发送失败 (第 {attempt}/{self._UPDATE_SEND_ATTEMPTS} 次,"
+                    f" {group_id}): {exc}"
+                )
+                if attempt < self._UPDATE_SEND_ATTEMPTS:
+                    await asyncio.sleep(self._UPDATE_SEND_DELAYS[attempt - 1])
 
-        raise RuntimeError(f"AstrBot 主动发送未找到匹配平台: {session}")
+        raise RuntimeError(f"推送发送失败,已达最大重试次数: {last_exc}")
 
     async def _translate_episode_summary_if_enabled(self, episode: Episode) -> Episode:
         if (
